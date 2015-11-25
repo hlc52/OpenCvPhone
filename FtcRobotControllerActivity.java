@@ -43,11 +43,13 @@ import android.hardware.usb.UsbManager;
 import android.os.Bundle;
 import android.os.IBinder;
 import android.preference.PreferenceManager;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.WindowManager;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -68,11 +70,32 @@ import com.qualcomm.robotcore.util.ImmersiveMode;
 import com.qualcomm.robotcore.util.RobotLog;
 import com.qualcomm.robotcore.wifi.WifiDirectAssistant;
 
+import org.opencv.android.BaseLoaderCallback;
+import org.opencv.android.CameraBridgeViewBase;
+import org.opencv.android.LoaderCallbackInterface;
+import org.opencv.android.OpenCVLoader;
+import org.opencv.core.Core;
+import org.opencv.core.CvType;
+import org.opencv.core.Mat;
+import org.opencv.core.MatOfPoint;
+import org.opencv.core.MatOfPoint2f;
+import org.opencv.core.Point;
+import org.opencv.core.Rect;
+import org.opencv.core.Scalar;
+import org.opencv.core.Size;
+import org.opencv.imgproc.Imgproc;
+
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.Serializable;
+import java.util.ArrayList;
+import java.util.List;
 
-public class FtcRobotControllerActivity extends Activity {
+
+
+public class FtcRobotControllerActivity extends Activity implements CameraBridgeViewBase.CvCameraViewListener2 {
+
+  public static boolean whatDo = false;
 
   private static final int REQUEST_CONFIG_WIFI_CHANNEL = 1;
   private static final boolean USE_DEVICE_EMULATION = false;
@@ -102,6 +125,7 @@ public class FtcRobotControllerActivity extends Activity {
   protected FtcRobotControllerService controllerService;
 
   protected FtcEventLoop eventLoop;
+  protected CameraBridgeViewBase mOpenCvCameraView;
 
   protected class RobotRestarter implements Restarter {
 
@@ -121,6 +145,36 @@ public class FtcRobotControllerActivity extends Activity {
     @Override
     public void onServiceDisconnected(ComponentName name) {
       controllerService = null;
+    }
+  };
+
+  private static final String TAG = "OCVSample::Activity";
+
+
+  private Mat imgSource, imgMat;
+  private List<MatOfPoint> contours;
+  private MatOfPoint temp_contour;
+  private MatOfPoint2f new_mat;
+  private int contourSize;
+  private MatOfPoint2f approxCurve_temp;
+  private MatOfPoint points, approxf1;
+  private Rect rect;
+  private Size KERN;
+
+  private BaseLoaderCallback mLoaderCallback = new BaseLoaderCallback(this) {
+    @Override
+    public void onManagerConnected(int status) {
+      switch (status) {
+        case LoaderCallbackInterface.SUCCESS: {
+          Log.i(TAG, "OpenCV loaded successfully");
+          mOpenCvCameraView.enableView();
+        }
+        break;
+        default: {
+          super.onManagerConnected(status);
+        }
+        break;
+      }
     }
   };
 
@@ -174,6 +228,15 @@ public class FtcRobotControllerActivity extends Activity {
     hittingMenuButtonBrightensScreen();
 
     if (USE_DEVICE_EMULATION) { HardwareFactory.enableDeviceEmulation(); }
+
+  setContentView(R.layout.activity_ftc_controller);
+  getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+      mOpenCvCameraView = (CameraBridgeViewBase) findViewById(R.id.tutorial1_activity_java_surface_view);
+  //mOpenCvCameraView.setVisibility(SurfaceView.VISIBLE);
+  mOpenCvCameraView.setMaxFrameSize(1000, 500);
+  //mOpenCvCameraView.setDisplayOrientation(90);
+  mOpenCvCameraView.setCvCameraViewListener(this);
+
   }
 
   @Override
@@ -202,14 +265,21 @@ public class FtcRobotControllerActivity extends Activity {
 
   @Override
   protected void onResume() {
-    super.onResume();
+  super.onResume();
+  if (!OpenCVLoader.initDebug()) {
+    Log.d(TAG, "Internal OpenCV library not found. Using OpenCV Manager for initialization");
+    OpenCVLoader.initAsync(OpenCVLoader.OPENCV_VERSION_3_0_0, this, mLoaderCallback);
+  } else {
+    Log.d(TAG, "OpenCV library found inside package. Using it!");
+    mLoaderCallback.onManagerConnected(LoaderCallbackInterface.SUCCESS);
   }
-
+}
   @Override
   public void onPause() {
     super.onPause();
+    if (mOpenCvCameraView != null)
+      mOpenCvCameraView.disableView();
   }
-
   @Override
   protected void onStop() {
     super.onStop();
@@ -380,5 +450,82 @@ public class FtcRobotControllerActivity extends Activity {
         toast.show();
       }
     });
+  }
+
+  @Override
+  public void onDestroy() {
+    super.onDestroy();
+    if (mOpenCvCameraView != null)
+      mOpenCvCameraView.disableView();
+  }
+
+  public void onCameraViewStarted(int width, int height) {
+  }
+
+  public void onCameraViewStopped() {
+    whatDo = false;
+  }
+
+  public Mat onCameraFrame(CameraBridgeViewBase.CvCameraViewFrame inputFrame) {
+    imgSource = inputFrame.rgba();
+    imgMat = inputFrame.gray();
+    //whatDo = false;
+
+
+    Imgproc.cvtColor(inputFrame.rgba(), imgMat, Imgproc.COLOR_RGB2HSV_FULL);
+
+    //Imgproc.Canny(imgMat, imgMat, 0, 255);
+    //Imgproc.bilateralFilter(hsv, mid, 0, 50, 50);
+    //KERN = new Size(7, 7);
+    //Imgproc.GaussianBlur(imgMat, imgMat, KERN, 2);
+
+
+    /*BLUE POST IT*/
+    //Core.inRange(imgMat, new Scalar(125, 245, 213), new Scalar(155, 255, 255), imgMat);
+    Core.inRange(imgMat, new Scalar(125, 235, 207), new Scalar(145, 255, 255), imgMat);
+
+    //find the contours
+    contours = new ArrayList<MatOfPoint>();
+    Imgproc.findContours(imgMat, contours, new Mat(), Imgproc.RETR_LIST, Imgproc.CHAIN_APPROX_NONE);
+
+    //temp_contour = contours.get(0); //the largest is at the index 0 for starting point
+    //getting rid of this gets rid of errors
+
+    for (int idx = 0; idx < contours.size(); idx++) {
+      temp_contour = contours.get(idx);
+      //check if this contour is a square
+
+      new_mat = new MatOfPoint2f(temp_contour.toArray());
+
+      contourSize = (int) temp_contour.total();
+      approxCurve_temp = new MatOfPoint2f();
+      approxf1 = new MatOfPoint();
+
+      Imgproc.approxPolyDP(new_mat, approxCurve_temp, contourSize * 0.05, true);
+      approxCurve_temp.convertTo(approxf1, CvType.CV_32S);
+
+      if (approxCurve_temp.total() == 4 && Imgproc.isContourConvex(approxf1)) {
+        points = new MatOfPoint(approxCurve_temp.toArray());
+        rect = Imgproc.boundingRect(points);
+        if (Imgproc.boundingRect(points).area() >= 1000){//checks for things only above 100 pixels in size
+          Imgproc.rectangle(imgSource, new Point(rect.x, rect.y), new Point(rect.x + rect.width, rect.y + rect.height), new Scalar(255, 0, 0, 255), 3);
+          whatDo = true;
+        }
+      }
+    }
+    Core.flip(imgSource, imgSource, -1);
+
+    int centerX = Math.round(imgMat.width()/2);
+    int centerY = Math.round(imgMat.height()/2);
+
+    Point center = new Point(centerY,centerX);
+    double angle = 90;
+    double scale = 1.0;
+
+    Mat mapMatrix = Imgproc.getRotationMatrix2D(center, angle, scale);
+    Imgproc.warpAffine(imgSource, imgSource, mapMatrix, imgSource.size());
+    //this rotates the matrix of the image
+
+    return imgSource;
   }
 }
